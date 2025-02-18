@@ -49,7 +49,7 @@ export function WalletSetup({
   });
 
   // Listen for MetaMask account changes
-useEffect(() => {
+  useEffect(() => {
   const ethereum = window.ethereum;
   if (!ethereum) return;
 
