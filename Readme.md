@@ -51,3 +51,19 @@ npm run dev
 # or
 yarn dev
 ```
+
+
+## Project Structure
+
+```bash
+├── app/
+│   ├── api/           # API routes
+│   ├── components/    # React components
+│   └── pages/         # Page components
+├── config/            # Configuration files
+├── hooks/             # Custom React hooks
+├── lib/               # Utility functions
+├── public/            # Static files
+├── styles/            # CSS styles
+└── types/             # TypeScript type definitions
+```
