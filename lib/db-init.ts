@@ -23,6 +23,7 @@ async function initializeDatabase() {
         address VARCHAR(42) NOT NULL UNIQUE,
         label VARCHAR(255) NOT NULL,
         has_licenses BOOLEAN DEFAULT false,
+        verified BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_address (address),

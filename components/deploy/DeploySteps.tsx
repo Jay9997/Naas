@@ -2,14 +2,21 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
-import { Wallet } from '@/types/wallet';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useDispatch } from 'react-redux';
+import type { Wallet, WalletCreate } from '@/types/wallet';
 import { WalletSetup } from './WalletSetup';
 import { LicenseSelection } from './LicenseSelection';
 import { DelegateLicenses } from './DelegateLicenses';
 import { deploySteps } from '@/config/deploy-steps';
 import { useWalletLicenses } from '@/hooks/use-wallet-licenses';
 import { useAccount } from 'wagmi';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
+import { 
+  setSelectedWallet as setReduxWallet,
+  setCurrentStep,
+  setSelectedLicenses,
+} from '@/store/slices/deploymentSlice';
 
 interface DeployStepsProps {
   isAddingWallet: boolean;
@@ -20,7 +27,7 @@ interface DeployStepsProps {
   onWalletSelect: (wallet: Wallet) => void;
   onDropdownToggle: (e: React.MouseEvent) => void;
   onCancel: () => void;
-  onSaveWallet: (wallet: Wallet) => void;
+  onSaveWallet: (wallet: WalletCreate) => void;
   existingWallets: Wallet[];
 }
 
@@ -36,106 +43,94 @@ export function DeploySteps({
   onSaveWallet,
   existingWallets,
 }: DeployStepsProps) {
-  const [selectedLicenses, setSelectedLicenses] = useState<Set<string>>(new Set());
-  const [currentStep, setCurrentStep] = useState(0);
+  const dispatch = useDispatch();
+  const [selectedLicenses, setLocalSelectedLicenses] = useState<Set<string>>(new Set());
+  const [currentStep, setLocalCurrentStep] = useState(0);
   const [showLicenseSelection, setShowLicenseSelection] = useState(false);
-  const [lastConnectedWallet, setLastConnectedWallet] = useState<string | null>(null);
   
   const { address, isConnected } = useAccount();
   const { licenses: selectedWalletLicenses, loading: selectedWalletLoading } = useWalletLicenses(selectedWallet?.address);
-
-  // Handle wallet connection
-  const connectToWallet = async (walletAddress: string) => {
-    if (!window.ethereum) {
-      toast({
-        title: "Error",
-        description: "Please install MetaMask",
-        variant: "destructive",
-      });
-      return false;
-    }
-
-    try {
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts'
-      });
-      
-      if (accounts[0]?.toLowerCase() === walletAddress.toLowerCase()) {
-        window.localStorage.setItem('lastConnectedWallet', walletAddress);
-        return true;
-      }
-      
-      toast({
-        title: "Error",
-        description: "Please switch to the correct wallet in MetaMask",
-        variant: "destructive",
-      });
-      return false;
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to connect to wallet",
-        variant: "destructive",
-      });
-      return false;
-    }
-  };
-
-  const handleWalletSelect = useCallback(async (wallet: Wallet) => {
-    try {
-      const connected = await connectToWallet(wallet.address);
-      if (connected) {
-        onWalletSelect(wallet);
-        setShowLicenseSelection(true);
-        setCurrentStep(1);
-        setLastConnectedWallet(wallet.address);
-      }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to connect to wallet",
-        variant: "destructive",
-      });
-    }
-  }, [onWalletSelect]);
-
-  // Effect to handle wallet persistence
+  
+  // Initialize from localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const saved = window.localStorage.getItem('lastConnectedWallet');
-      if (saved && address?.toLowerCase() === saved.toLowerCase()) {
-        setLastConnectedWallet(saved);
+      const savedStep = localStorage.getItem('currentStep');
+      const savedLicenses = localStorage.getItem('selectedLicenses');
+      const savedWallet = localStorage.getItem('selectedWallet');
+      
+      if (savedStep) {
+        const step = parseInt(savedStep);
+        setLocalCurrentStep(step);
+        dispatch(setCurrentStep(step));
+      }
+      
+      if (savedLicenses) {
+        try {
+          const parsedLicenses = JSON.parse(savedLicenses);
+          if (Array.isArray(parsedLicenses) && parsedLicenses.every(item => typeof item === 'string')) {
+            const licenses = new Set(parsedLicenses);
+            setLocalSelectedLicenses(licenses);
+            dispatch(setSelectedLicenses(Array.from(licenses)));
+          }
+        } catch (error) {
+          console.error('Error parsing saved licenses:', error);
+          localStorage.removeItem('selectedLicenses');
+        }
+      }
+      
+      if (savedWallet) {
+        try {
+          const wallet = JSON.parse(savedWallet);
+          if (wallet && typeof wallet === 'object' && 'address' in wallet) {
+            dispatch(setReduxWallet(wallet));
+            setShowLicenseSelection(currentStep === 1);
+          }
+        } catch (error) {
+          console.error('Error parsing saved wallet:', error);
+          localStorage.removeItem('selectedWallet');
+        }
       }
     }
-  }, [address]);
+  }, []);
 
+  // Save state to localStorage
   useEffect(() => {
-    if (selectedWallet) {
-      setCurrentStep(1);
-      setShowLicenseSelection(true);
-      setSelectedLicenses(new Set());
-    } else {
-      setCurrentStep(0);
-      setShowLicenseSelection(false);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('currentStep', currentStep.toString());
+      localStorage.setItem('selectedLicenses', JSON.stringify(Array.from(selectedLicenses)));
+      if (selectedWallet) {
+        localStorage.setItem('selectedWallet', JSON.stringify(selectedWallet));
+      }
     }
-  }, [selectedWallet?.address]);
+  }, [currentStep, selectedLicenses, selectedWallet]);
+
+  const handleWalletSelect = useCallback((wallet: Wallet) => {
+    onWalletSelect(wallet);
+    setShowLicenseSelection(true);
+    setLocalCurrentStep(1);
+    dispatch(setCurrentStep(1));
+  }, [onWalletSelect, dispatch]);
 
   const handleLicenseSelect = useCallback((licenses: Set<string>) => {
-    setSelectedLicenses(licenses);
+    setLocalSelectedLicenses(licenses);
     if (licenses.size > 0) {
-      setCurrentStep(2);
+      setLocalCurrentStep(2);
       setShowLicenseSelection(false);
+      dispatch(setCurrentStep(2));
+      dispatch(setSelectedLicenses(Array.from(licenses)));
     }
-  }, []);
+  }, [dispatch]);
 
   const handleDelegationComplete = useCallback(() => {
-    setCurrentStep(3);
-  }, []);
+    setLocalCurrentStep(3);
+    dispatch(setCurrentStep(3));
+  }, [dispatch]);
 
   const handleBackToLicenses = useCallback(() => {
-    setCurrentStep(1);
+    setLocalCurrentStep(1);
     setShowLicenseSelection(true);
-  }, []);
+    dispatch(setCurrentStep(1));
+  }, [dispatch]);
 
   return (
     <div className="space-y-8">
@@ -149,7 +144,7 @@ export function DeploySteps({
               {index < currentStep ? (
                 <div className="text-white text-sm">✓</div>
               ) : index === currentStep ? (
-                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                <div className="w-3 h-3 rounded-full bg-white"></div>
               ) : (
                 <div className="text-white text-sm">{index + 1}</div>
               )}
@@ -238,7 +233,7 @@ export function DeploySteps({
             )}
 
             {/* License Delegation */}
-            {index === 2 && currentStep >= 2 && selectedLicenses.size > 0 && (
+            {index === 2 && currentStep === 2 && selectedLicenses.size > 0 && selectedWallet && (
               <>
                 <button
                   onClick={handleBackToLicenses}
@@ -249,7 +244,7 @@ export function DeploySteps({
                 <DelegateLicenses
                   selectedLicenses={selectedLicenses}
                   onDelegationComplete={handleDelegationComplete}
-                  selectedWalletAddress={selectedWallet!.address}
+                  selectedWalletAddress={selectedWallet.address}
                 />
               </>
             )}

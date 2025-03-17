@@ -1,33 +1,86 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { useWalletLicenses } from './use-wallet-licenses';
+import { useAccount, useDisconnect } from 'wagmi';
 import type { Wallet } from '@/types/wallet';
+import { toast } from 'sonner';
+import {
+  setSelectedWallet,
+  setWallets,
+  addWallet as addWalletToStore,
+  updateWallet as updateWalletInStore,
+  setLoading,
+  setError,
+} from '@/store/slices/walletSlice';
+import type { RootState } from '@/types/store';
 
 export function useWallets() {
-  const [wallets, setWallets] = useState<Wallet[]>([]);
-  const [selectedWallet, setSelectedWallet] = useState<Wallet | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const dispatch = useDispatch();
+  const { selectedWallet, wallets, isLoading, error } = useSelector(
+    (state: RootState) => state.wallet
+  );
   const { licenses, loading: licensesLoading } = useWalletLicenses(selectedWallet?.address);
+  const { address, isConnected } = useAccount();
+  const { disconnect } = useDisconnect();
 
-  // Load wallets from API
+  // Reset selected wallet when connection changes
   useEffect(() => {
+    if (!isConnected) {
+      dispatch(setSelectedWallet(null));
+    }
+  }, [isConnected, dispatch]);
+
+  // Load wallets
+  useEffect(() => {
+    let mounted = true;
+
     async function fetchWallets() {
+      dispatch(setLoading(true));
       try {
-        const response = await fetch('/api/wallets');
-        if (!response.ok) throw new Error('Failed to fetch wallets');
+        const response = await fetch('/api/wallets', {
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch wallets');
+        }
+
         const data = await response.json();
-        setWallets(data);
+        
+        if (!mounted) return;
+
+        const walletsData = data.map((wallet: any) => ({
+          address: wallet.address,
+          label: wallet.label,
+          hasLicenses: Boolean(wallet.has_licenses),
+          createdAt: wallet.created_at,
+          updatedAt: wallet.updated_at,
+        }));
+
+        dispatch(setWallets(walletsData));
+        dispatch(setError(null));
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load wallets');
-        console.error('Failed to load wallets:', err);
+        if (!mounted) return;
+        const message = err instanceof Error ? err.message : 'Failed to load wallets';
+        dispatch(setError(message));
+        toast.error(message);
       } finally {
-        setLoading(false);
+        if (mounted) {
+          dispatch(setLoading(false));
+        }
       }
     }
+
     fetchWallets();
-  }, []);
+    return () => {
+      mounted = false;
+    };
+  }, [dispatch]);
 
   // Update wallet license status whenever licenses change
   useEffect(() => {
@@ -42,7 +95,7 @@ export function useWallets() {
     if (currentWalletHasLicenses !== hasLicenses) {
       updateWallet(selectedWallet.address, { hasLicenses });
     }
-  }, [selectedWallet?.address, licenses, licensesLoading]);
+  }, [selectedWallet?.address, licenses, licensesLoading, wallets]);
 
   const addWallet = useCallback(async (wallet: Wallet) => {
     try {
@@ -58,13 +111,17 @@ export function useWallets() {
       }
 
       const newWallet = await response.json();
-      setWallets(prev => [...prev, newWallet]);
-      setSelectedWallet(newWallet);
+      dispatch(addWalletToStore(newWallet));
+      dispatch(setSelectedWallet(newWallet));
+      toast.success('Wallet added successfully');
+      
       return newWallet;
     } catch (err) {
-      throw err instanceof Error ? err : new Error('Failed to add wallet');
+      const message = err instanceof Error ? err.message : 'Failed to add wallet';
+      toast.error(message);
+      throw new Error(message);
     }
-  }, []);
+  }, [dispatch]);
 
   const updateWallet = useCallback(async (address: string, updates: Partial<Wallet>) => {
     try {
@@ -80,24 +137,24 @@ export function useWallets() {
       }
 
       const updatedWallet = await response.json();
-      
-      setWallets(prev => prev.map(w => 
-        w.address.toLowerCase() === address.toLowerCase() ? updatedWallet : w
-      ));
-      
-      if (selectedWallet?.address.toLowerCase() === address.toLowerCase()) {
-        setSelectedWallet(updatedWallet);
-      }
+      dispatch(updateWalletInStore(updatedWallet));
+      toast.success('Wallet updated successfully');
     } catch (err) {
-      console.error('Error updating wallet:', err);
+      const message = err instanceof Error ? err.message : 'Failed to update wallet';
+      toast.error(message);
+      console.error('Error updating wallet:', message);
     }
-  }, [selectedWallet]);
+  }, [dispatch]);
+
+  const handleSelectWallet = useCallback((wallet: Wallet | null) => {
+    dispatch(setSelectedWallet(wallet));
+  }, [dispatch]);
 
   return {
     wallets,
     selectedWallet,
-    setSelectedWallet,
-    loading,
+    setSelectedWallet: handleSelectWallet,
+    loading: isLoading,
     error,
     addWallet,
     updateWallet

@@ -1,7 +1,8 @@
-import { configureStore } from '@reduxjs/toolkit';
-import { persistStore, persistReducer } from 'redux-persist';
+import { configureStore, combineReducers } from '@reduxjs/toolkit';
+import { persistStore, persistReducer, FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER } from 'redux-persist';
 import createWebStorage from 'redux-persist/lib/storage/createWebStorage';
 import { deploymentReducer } from './slices/deploymentSlice';
+import { walletReducer } from './slices/walletSlice';
 
 const createNoopStorage = () => {
   return {
@@ -21,21 +22,26 @@ const storage = typeof window !== 'undefined'
   ? createWebStorage('local')
   : createNoopStorage();
 
+const rootReducer = combineReducers({
+  deployment: deploymentReducer,
+  wallet: walletReducer,
+});
+
 const persistConfig = {
   key: 'root',
   storage,
-  whitelist: ['deployment'], // Only persist deployment state
+  whitelist: ['deployment', 'wallet'], // Persist both deployment and wallet states
 };
 
-const persistedReducer = persistReducer(persistConfig, deploymentReducer);
+const persistedReducer = persistReducer(persistConfig, rootReducer);
 
 export const store = configureStore({
-  reducer: {
-    deployment: persistedReducer,
-  },
+  reducer: persistedReducer,
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
-      serializableCheck: false,
+      serializableCheck: {
+        ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER],
+      },
     }),
 });
 

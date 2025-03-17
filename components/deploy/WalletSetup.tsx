@@ -103,6 +103,8 @@ export function WalletSetup({
       address,
       label: walletLabel,
       hasLicenses: false,
+      createdAt: '',
+      updatedAt: ''
     };
     
     try {

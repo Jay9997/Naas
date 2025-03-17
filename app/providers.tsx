@@ -9,7 +9,7 @@ import {
 import { WagmiConfig, createConfig, configureChains } from 'wagmi';
 import { publicProvider } from 'wagmi/providers/public';
 import { mawariTestnet } from '@/config/chains';
-import { Toaster } from '@/components/ui/toaster';
+import { Toaster } from 'sonner';
 import {
   metaMaskWallet,
   coinbaseWallet,
@@ -24,16 +24,16 @@ import { PersistGate } from 'redux-persist/integration/react';
 import { store, persistor } from '@/store';
 import '@rainbow-me/rainbowkit/styles.css';
 
-const { chains, publicClient } = configureChains(
+const projectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || 'demo';
+
+const { chains, publicClient, webSocketPublicClient } = configureChains(
   [mawariTestnet],
   [publicProvider()]
 );
 
-const projectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || 'YOUR_PROJECT_ID';
-
 const connectors = connectorsForWallets([
   {
-    groupName: 'Popular',
+    groupName: 'Recommended',
     wallets: [
       metaMaskWallet({ 
         projectId, 
@@ -41,28 +41,26 @@ const connectors = connectorsForWallets([
         shimDisconnect: true,
         UNSTABLE_shimOnConnectSelectAccount: true
       }),
-      coinbaseWallet({ 
-        appName: 'Mawari Operator', 
-        chains 
-      }),
-      walletConnectWallet({ projectId, chains }),
     ],
   },
   {
-    groupName: 'More',
+    groupName: 'Other',
     wallets: [
-      rainbowWallet({ projectId, chains }),
+      coinbaseWallet({ appName: 'Mawari License Delegation', chains }),
+      walletConnectWallet({ projectId, chains }),
       trustWallet({ projectId, chains }),
       braveWallet({ chains }),
       ledgerWallet({ projectId, chains }),
+      rainbowWallet({ projectId, chains }),
     ],
   },
 ]);
 
 const wagmiConfig = createConfig({
-  autoConnect: false,
+  autoConnect: true,
   connectors,
   publicClient,
+  webSocketPublicClient,
 });
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -83,12 +81,23 @@ export function Providers({ children }: { children: React.ReactNode }) {
               accentColor: '#EC4899',
               borderRadius: 'medium',
             })}
-            modalSize="wide"
-            showRecentTransactions={true}
-            coolMode
+            modalSize="compact"
+            appInfo={{
+              appName: 'Mawari License Delegation',
+              learnMoreUrl: 'https://docs.mawari.io',
+            }}
           >
             {mounted && children}
-            <Toaster            />
+            <Toaster 
+              position="top-right"
+              toastOptions={{
+                style: {
+                  background: '#1A1525',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'white',
+                },
+              }}
+            />
           </RainbowKitProvider>
         </WagmiConfig>
       </PersistGate>

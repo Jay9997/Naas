@@ -45,9 +45,7 @@ export const deploymentSlice = createSlice({
     setError: (state, action: PayloadAction<string | null>) => {
       state.error = action.payload;
     },
-    resetState: (state) => {
-      return initialState;
-    },
+    resetState: () => initialState,
   },
 });
 
