@@ -6,9 +6,9 @@ import { getContract, encodeFunctionData } from 'viem';
 import { useAccount } from 'wagmi';
 import { mawariTestnet } from '@/config/chains';
 
-const NFT_CONTRACT_ADDRESS = "0x3F1BD1Abc350eD6313Ff7Eaab561DCAbbcc61071";
+const NFT_CONTRACT_ADDRESS = "0xebD54bff71c779291280A73dD489b9Be44A626A3";
 
-// Extended ABI with multicall function
+// Extended ABI with multicall function (ownerOf removed as it's in the wallet hook)
 const ABI = [
   {
     inputs: [
@@ -40,7 +40,13 @@ export interface DelegationResult {
   error?: string;
 }
 
-export function useDelegateLicenses(selectedWalletAddress?: string) {
+export interface OwnershipCheckResult {
+  ownedTokens: string[];
+  notOwnedTokens: string[];
+  alreadyDelegatedTokens: string[];
+}
+
+export function useDelegateLicenses() {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const [isLoading, setIsLoading] = useState(false);
@@ -65,6 +71,11 @@ export function useDelegateLicenses(selectedWalletAddress?: string) {
       }
     }
 
+    // Check ownership first
+    if (!walletClient) {
+      throw new Error('Wallet not connected');
+    }
+
     setIsLoading(true);
     setError(undefined);
 
@@ -87,6 +98,7 @@ export function useDelegateLicenses(selectedWalletAddress?: string) {
             simError.cause?.message?.includes('Delegation exists')) {
           throw new Error(`License ${tokenId} is already delegated`);
         }
+        throw simError;
       }
 
       // If simulation passes, proceed with actual delegation
@@ -111,7 +123,7 @@ export function useDelegateLicenses(selectedWalletAddress?: string) {
     }
   };
 
-  // Batch delegation using multicall
+  // Batch delegation using multicall ONLY
   const delegateLicensesBatch = async (tokenIds: string[], delegateeAddress: string) => {
     if (!walletClient) {
       setError('Wallet not connected');
@@ -151,22 +163,13 @@ export function useDelegateLicenses(selectedWalletAddress?: string) {
         })
       );
 
-      // Check if the contract supports multicall by trying to simulate it
-      const supportsMulticall = await checkMulticallSupport(contract, delegateeAddress, tokenIds[0]);
+      console.log('Attempting multicall with tokens:', tokenIds);
+      console.log('Delegatee address:', delegateeAddress);
+      console.log('Sender address:', walletClient.account.address);
 
-      if (!supportsMulticall) {
-        // Fall back to individual delegations
-        return await delegateLicensesIndividually(tokenIds, delegateeAddress);
-      }
-
-      // Try to simulate the multicall
-      try {
-        await contract.simulate.multicall([encodedCalls]);
-      } catch (simError: any) {
-        // If simulation fails, fall back to individual delegations
-        console.warn('Multicall simulation failed, falling back to individual delegations:', simError);
-        return await delegateLicensesIndividually(tokenIds, delegateeAddress);
-      }
+      // Simulate the multicall (REQUIRED - don't skip this)
+      await contract.simulate.multicall([encodedCalls]);
+      console.log('Multicall simulation passed');
 
       // If simulation passes, proceed with actual multicall
       const delegateContract = getContract({
@@ -175,7 +178,10 @@ export function useDelegateLicenses(selectedWalletAddress?: string) {
       });
 
       const hash = await delegateContract.write.multicall([encodedCalls]);
+      console.log('Multicall transaction hash:', hash);
+      
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      console.log('Multicall transaction confirmed:', receipt.status);
 
       // Create success results for all tokens
       const batchResults = tokenIds.map(tokenId => ({
@@ -194,66 +200,12 @@ export function useDelegateLicenses(selectedWalletAddress?: string) {
       };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to batch delegate licenses';
+      console.error('Multicall failed:', err);
       setError(errorMessage);
-      
-      // If batch fails, try individual delegations
-      console.warn('Batch delegation failed, falling back to individual delegations:', err);
-      return await delegateLicensesIndividually(tokenIds, delegateeAddress);
+      throw err; // Re-throw the error instead of falling back
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Helper to check if contract supports multicall
-  const checkMulticallSupport = async (contract: any, delegateeAddress: string, sampleTokenId: string) => {
-    try {
-      const encodedCall = encodeFunctionData({
-        abi: ABI,
-        functionName: 'delegate',
-        args: [delegateeAddress as `0x${string}`, BigInt(sampleTokenId)]
-      });
-
-      await contract.simulate.multicall([[encodedCall]]);
-      return true;
-    } catch (err: any) {
-      // Check if the error is due to multicall not existing vs other errors
-      if (err.message?.includes('method not found') || 
-          err.cause?.message?.includes('method not found') ||
-          err.message?.includes('function selector was not recognized') ||
-          err.cause?.message?.includes('function selector was not recognized')) {
-        return false;
-      }
-      // Other errors might just be with the specific delegation, not with multicall itself
-      return true;
-    }
-  };
-
-  // Individual delegations with progress tracking
-  const delegateLicensesIndividually = async (tokenIds: string[], delegateeAddress: string) => {
-    const results: DelegationResult[] = [];
-    let successCount = 0;
-    
-    for (let i = 0; i < tokenIds.length; i++) {
-      const tokenId = tokenIds[i];
-      try {
-        const hash = await delegateLicense(tokenId, delegateeAddress);
-        results.push({ tokenId, success: true, hash });
-        successCount++;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-        results.push({ tokenId, success: false, error: errorMessage });
-      }
-      
-      // Update progress
-      setProgress(Math.round((i + 1) / tokenIds.length * 100));
-      setResults([...results]);
-    }
-    
-    return { 
-      hash: null, 
-      successful: successCount > 0,
-      results
-    };
   };
 
   return { 

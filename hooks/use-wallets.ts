@@ -138,11 +138,11 @@ export function useWallets() {
 
       const updatedWallet = await response.json();
       dispatch(updateWalletInStore(updatedWallet));
-      toast.success('Wallet updated successfully');
+      // Removed the toast.success notification here
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update wallet';
-      toast.error(message);
       console.error('Error updating wallet:', message);
+      // Removed the toast.error notification here too
     }
   }, [dispatch]);
 

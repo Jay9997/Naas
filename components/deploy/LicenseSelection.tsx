@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useWalletLicenses } from '@/hooks/use-wallet-licenses';
 import type { License } from '@/types/license';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 
 interface LicenseSelectionProps {
   walletAddress: string;
@@ -16,17 +16,63 @@ export function LicenseSelection({
   onLicenseSelect,
   selectedLicenses: initialSelectedLicenses
 }: LicenseSelectionProps) {
-  const { licenses, loading, error, progress } = useWalletLicenses(walletAddress);
+  const { 
+    licenses, 
+    loading, 
+    error, 
+    progress, 
+    refreshLicenses 
+  } = useWalletLicenses(walletAddress);
+  
   const [localSelectedLicenses, setLocalSelectedLicenses] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const licensesPerPage = 50;
+
+  // Reset selection when wallet address changes
+  useEffect(() => {
+    setLocalSelectedLicenses(new Set());
+    setCurrentPage(1);
+    setSearchTerm('');
+  }, [walletAddress]);
+
+  // Log token IDs for debugging
+  useEffect(() => {
+    if (licenses.length > 0) {
+      console.log("First 5 licenses from hook:", licenses.slice(0, 5).map(l => l.tokenId));
+    }
+  }, [licenses]);
+
+  // Sync selected licenses with available licenses
+  useEffect(() => {
+    if (licenses.length > 0) {
+      // Create a Set of all available token IDs for quick lookup
+      const availableTokenIds = new Set(licenses.map(license => license.tokenId));
+      
+      // Filter out any selected licenses that are no longer available
+      const updatedSelection = new Set(
+        [...localSelectedLicenses].filter(tokenId => availableTokenIds.has(tokenId))
+      );
+      
+      // Update the selection state if it's changed
+      if (updatedSelection.size !== localSelectedLicenses.size) {
+        setLocalSelectedLicenses(updatedSelection);
+      }
+    }
+  }, [licenses, localSelectedLicenses]);
 
   // Quick select options
   const quickSelectOptions = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
   // Filter out delegated licenses
   const availableLicenses = licenses.filter(license => license.status === 'available');
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await refreshLicenses();
+    setIsRefreshing(false);
+  };
 
   const toggleLicense = (tokenId: string) => {
     const newSelected = new Set(localSelectedLicenses);
@@ -89,6 +135,13 @@ export function LicenseSelection({
     return (
       <div className="mt-4 p-6 bg-red-500/10 border border-red-500/20 rounded-lg">
         <p className="text-red-400 text-center font-medium">{error}</p>
+        <button 
+          onClick={handleRefresh}
+          className="mt-4 px-4 py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors flex items-center justify-center mx-auto"
+        >
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Try Again
+        </button>
       </div>
     );
   }
@@ -97,6 +150,13 @@ export function LicenseSelection({
     return (
       <div className="mt-4 p-6 bg-[#1A1525] rounded-lg">
         <p className="text-red-400 text-center font-medium">No available licenses found in this wallet</p>
+        <button 
+          onClick={handleRefresh}
+          className="mt-4 px-4 py-2 bg-[#2D2438] text-white rounded-lg hover:bg-pink-500/20 transition-colors flex items-center justify-center mx-auto"
+        >
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Refresh Licenses
+        </button>
       </div>
     );
   }
@@ -107,6 +167,14 @@ export function LicenseSelection({
         <div>
           <span className="text-sm text-gray-400">Total Available Licenses: </span>
           <span className="font-semibold">{availableLicenses.length}</span>
+          <button 
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="ml-2 p-1 text-gray-400 hover:text-pink-400 transition-colors"
+            title="Refresh licenses"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
         </div>
         <div>
           <span className="text-sm text-gray-400">Selected: </span>
@@ -120,7 +188,8 @@ export function LicenseSelection({
           <button
             key={option}
             onClick={() => handleQuickSelect(option)}
-            className="px-3 py-1 bg-[#2D2438] text-white rounded-lg hover:bg-pink-500/20 transition-colors text-sm"
+            disabled={option > availableLicenses.length}
+            className="px-3 py-1 bg-[#2D2438] text-white rounded-lg hover:bg-pink-500/20 transition-colors text-sm disabled:opacity-50"
           >
             Select {option}
           </button>
