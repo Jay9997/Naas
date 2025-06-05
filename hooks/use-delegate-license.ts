@@ -8,7 +8,7 @@ import { mawariTestnet } from '@/config/chains';
 
 const NFT_CONTRACT_ADDRESS = "0xebD54bff71c779291280A73dD489b9Be44A626A3";
 
-// Extended ABI with multicall function (ownerOf removed as it's in the wallet hook)
+// Extended ABI with multicall function
 const ABI = [
   {
     inputs: [
@@ -46,7 +46,7 @@ export interface OwnershipCheckResult {
   alreadyDelegatedTokens: string[];
 }
 
-export function useDelegateLicenses() {
+export function useDelegateLicenses(selectedWalletAddress: string) {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const [isLoading, setIsLoading] = useState(false);
@@ -56,7 +56,7 @@ export function useDelegateLicenses() {
   const [progress, setProgress] = useState<number>(0);
   const [results, setResults] = useState<DelegationResult[]>([]);
 
-  // Individual license delegation (original implementation)
+  // Individual license delegation
   const delegateLicense = async (tokenId: string, delegateeAddress: string) => {
     if (!walletClient) {
       setError('Wallet not connected');
@@ -69,11 +69,6 @@ export function useDelegateLicenses() {
       } catch (err) {
         throw new Error('Please switch to Mawari Testnet network');
       }
-    }
-
-    // Check ownership first
-    if (!walletClient) {
-      throw new Error('Wallet not connected');
     }
 
     setIsLoading(true);
@@ -93,7 +88,6 @@ export function useDelegateLicenses() {
           BigInt(tokenId)
         ]);
       } catch (simError: any) {
-        // Check if the error message contains "Delegation exists"
         if (simError.message?.includes('Delegation exists') || 
             simError.cause?.message?.includes('Delegation exists')) {
           throw new Error(`License ${tokenId} is already delegated`);
@@ -101,7 +95,6 @@ export function useDelegateLicenses() {
         throw simError;
       }
 
-      // If simulation passes, proceed with actual delegation
       const delegateContract = getContract({
         ...contract,
         walletClient,
@@ -123,7 +116,7 @@ export function useDelegateLicenses() {
     }
   };
 
-  // Batch delegation using multicall ONLY
+  // SINGLE MULTICALL - ALL 98 TOKENS IN ONE TRANSACTION WITH HIGH GAS LIMIT
   const delegateLicensesBatch = async (tokenIds: string[], delegateeAddress: string) => {
     if (!walletClient) {
       setError('Wallet not connected');
@@ -139,7 +132,7 @@ export function useDelegateLicenses() {
     }
 
     if (tokenIds.length === 0) {
-      return { hash: null, successful: true };
+      return { hash: null, successful: true, results: [] };
     }
 
     setIsLoading(true);
@@ -154,7 +147,17 @@ export function useDelegateLicenses() {
         publicClient,
       });
 
-      // Encode each delegate call
+      const delegateContract = getContract({
+        ...contract,
+        walletClient,
+      });
+
+      console.log(`🚀 SINGLE TRANSACTION: Processing ALL ${tokenIds.length} tokens in ONE multicall`);
+      console.log('Token IDs:', tokenIds);
+      console.log('Delegatee address:', delegateeAddress);
+      console.log('Sender address:', walletClient.account.address);
+
+      // Encode ALL delegate calls into ONE multicall array
       const encodedCalls = tokenIds.map(tokenId => 
         encodeFunctionData({
           abi: ABI,
@@ -163,46 +166,99 @@ export function useDelegateLicenses() {
         })
       );
 
-      console.log('Attempting multicall with tokens:', tokenIds);
-      console.log('Delegatee address:', delegateeAddress);
-      console.log('Sender address:', walletClient.account.address);
+      console.log(`✅ Encoded ${encodedCalls.length} delegate calls for SINGLE multicall`);
+      setProgress(25);
 
-      // Simulate the multicall (REQUIRED - don't skip this)
+      // Estimate gas for the large multicall
+      console.log('⛽ Estimating gas for large multicall...');
+      let gasEstimate: bigint;
+      try {
+        gasEstimate = await contract.estimateGas.multicall([encodedCalls], {
+          account: walletClient.account
+        });
+        console.log(`📊 Gas estimate: ${gasEstimate.toString()}`);
+      } catch (gasError) {
+        console.log('⚠️ Gas estimation failed, using high default gas limit');
+        gasEstimate = BigInt(10000000); // 10M gas as fallback
+      }
+
+      // Add 50% buffer to gas estimate for safety
+      const gasLimit = (gasEstimate * BigInt(150)) / BigInt(100);
+      console.log(`⛽ Using gas limit: ${gasLimit.toString()} (with 50% buffer)`);
+
+      // Simulate the multicall with ALL tokens
+      console.log('🔍 Simulating SINGLE multicall with ALL tokens...');
       await contract.simulate.multicall([encodedCalls]);
-      console.log('Multicall simulation passed');
+      console.log('✅ SINGLE multicall simulation PASSED for ALL tokens');
+      setProgress(50);
 
-      // If simulation passes, proceed with actual multicall
-      const delegateContract = getContract({
-        ...contract,
-        walletClient,
+      // Execute ONE multicall with ALL tokens and high gas limit
+      console.log('📤 Executing SINGLE multicall transaction with high gas limit...');
+      const hash = await delegateContract.write.multicall([encodedCalls], {
+        gas: gasLimit
       });
+      console.log(`📝 SINGLE multicall transaction hash: ${hash}`);
+      console.log(`⛽ Transaction submitted with gas limit: ${gasLimit.toString()}`);
+      setProgress(75);
 
-      const hash = await delegateContract.write.multicall([encodedCalls]);
-      console.log('Multicall transaction hash:', hash);
+      // Wait for the ONE transaction with extended timeout
+      console.log('⏳ Waiting for SINGLE transaction confirmation...');
+      const receipt = await publicClient.waitForTransactionReceipt({ 
+        hash,
+        timeout: 180000 // 3 minute timeout for large batch
+      });
       
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      console.log('Multicall transaction confirmed:', receipt.status);
+      console.log(`✅ SINGLE transaction confirmed: ${receipt.status}`);
+      console.log(`⛽ Actual gas used: ${receipt.gasUsed.toString()}`);
+      console.log(`💰 Effective gas price: ${receipt.effectiveGasPrice?.toString()}`);
 
-      // Create success results for all tokens
-      const batchResults = tokenIds.map(tokenId => ({
+      // ALL tokens succeed or fail together
+      const allResults = tokenIds.map(tokenId => ({
         tokenId,
-        success: true,
-        hash
+        success: receipt.status === 'success',
+        hash: receipt.status === 'success' ? hash : undefined,
+        error: receipt.status !== 'success' ? 'Transaction failed' : undefined
+      }));
+
+      setResults(allResults);
+      setProgress(100);
+
+      const successCount = receipt.status === 'success' ? tokenIds.length : 0;
+      
+      console.log(`🎉 SINGLE multicall result: ${successCount}/${tokenIds.length} successful`);
+      console.log(`💸 Total transaction cost: ${receipt.gasUsed} gas at ${receipt.effectiveGasPrice} per gas`);
+
+      return {
+        hash,
+        successful: receipt.status === 'success',
+        results: allResults,
+        totalSuccess: successCount,
+        totalFailed: tokenIds.length - successCount,
+        gasUsed: receipt.gasUsed.toString(),
+        gasPrice: receipt.effectiveGasPrice?.toString()
+      };
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delegate licenses in single transaction';
+      console.error('❌ SINGLE multicall failed:', err);
+      
+      // Check if it's a gas-related error
+      if (errorMessage.includes('gas') || errorMessage.includes('out of gas')) {
+        console.error('💸 Gas-related error - transaction may need higher gas limit');
+      }
+      
+      setError(errorMessage);
+      
+      const failedResults = tokenIds.map(tokenId => ({
+        tokenId,
+        success: false,
+        error: errorMessage
       }));
       
-      setResults(batchResults);
+      setResults(failedResults);
       setProgress(100);
       
-      return { 
-        hash, 
-        successful: receipt.status === 'success',
-        results: batchResults
-      };
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to batch delegate licenses';
-      console.error('Multicall failed:', err);
-      setError(errorMessage);
-      throw err; // Re-throw the error instead of falling back
+      throw err;
     } finally {
       setIsLoading(false);
     }

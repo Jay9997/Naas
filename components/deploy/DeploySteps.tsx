@@ -7,7 +7,7 @@ import { useDispatch } from 'react-redux';
 import type { Wallet, WalletCreate } from '@/types/wallet';
 import { WalletSetup } from './WalletSetup';
 import { LicenseSelection } from './LicenseSelection';
-import { DelegateLicenses } from './DelegateLicenses';
+import DelegateLicenses from './DelegateLicenses';
 import { deploySteps } from '@/config/deploy-steps';
 import { useWalletLicenses } from '@/hooks/use-wallet-licenses';
 import { useAccount } from 'wagmi';

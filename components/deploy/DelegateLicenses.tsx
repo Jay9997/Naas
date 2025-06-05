@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2, ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
+import { Loader2, ArrowLeft, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 import { useDelegateLicenses } from '@/hooks/use-delegate-license';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -14,7 +14,7 @@ interface DelegateLicensesProps {
   onBack?: () => void;
 }
 
-export function DelegateLicenses({ 
+function DelegateLicenses({ 
   selectedLicenses, 
   onDelegationComplete,
   selectedWalletAddress,
@@ -23,6 +23,12 @@ export function DelegateLicenses({
   const [delegateeAddress, setDelegateeAddress] = useState('');
   const [isDelegationStarted, setIsDelegationStarted] = useState(false);
   const [delegationComplete, setDelegationComplete] = useState(false);
+  const [finalStats, setFinalStats] = useState<{
+    successful: number;
+    failed: number;
+    total: number;
+  } | null>(null);
+
   const { 
     delegateLicensesBatch, 
     isLoading, 
@@ -34,19 +40,31 @@ export function DelegateLicenses({
 
   // Check if delegation is complete based on results
   useEffect(() => {
-    if (isDelegationStarted && results.length > 0) {
-      const successCount = results.filter(r => r.success).length;
+    if (isDelegationStarted && !isLoading) {
       const totalCount = selectedLicenses.size;
+      const resultCount = results.length;
       
-      // All attempts completed
-      if (results.length === totalCount && !isLoading) {
+      // Check if we have results for all tokens (either success or failure)
+      if (resultCount === totalCount) {
+        const successCount = results.filter(r => r.success).length;
+        const failedCount = totalCount - successCount;
+        
         setDelegationComplete(true);
+        setFinalStats({
+          successful: successCount,
+          failed: failedCount,
+          total: totalCount
+        });
         
         if (successCount === totalCount) {
-          toast.success(`Successfully delegated all ${totalCount} licenses!`);
+          toast.success(`🎉 Successfully delegated all ${totalCount} licenses!`);
+        } else if (successCount > 0) {
+          toast.success(`✅ Successfully delegated ${successCount} out of ${totalCount} licenses`);
+          if (failedCount > 0) {
+            toast.error(`❌ ${failedCount} license${failedCount > 1 ? 's' : ''} failed to delegate`);
+          }
         } else {
-          const failedCount = totalCount - successCount;
-          toast.error(`${failedCount} license${failedCount > 1 ? 's' : ''} failed to delegate`);
+          toast.error(`❌ All ${totalCount} licenses failed to delegate`);
         }
       }
     }
@@ -64,13 +82,25 @@ export function DelegateLicenses({
     }
 
     setIsDelegationStarted(true);
+    setDelegationComplete(false);
+    setFinalStats(null);
+    
     const licenses = Array.from(selectedLicenses);
     
+    // Show initial toast for large batches
+    if (licenses.length > 50) {
+      toast.info(`🚀 Starting SINGLE multicall transaction for ${licenses.length} licenses. This may take a few minutes...`);
+    }
+    
     try {
-      await delegateLicensesBatch(licenses, delegateeAddress);
+      const result = await delegateLicensesBatch(licenses, delegateeAddress);
+      console.log('Delegation batch completed:', result);
     } catch (err) {
       console.error('Delegation process failed:', err);
-      toast.error('Failed to start delegation process');
+      if (!isDelegationStarted || results.length === 0) {
+        toast.error('Failed to start delegation process');
+        setIsDelegationStarted(false);
+      }
     }
   };
 
@@ -95,13 +125,41 @@ export function DelegateLicenses({
     return results.filter(r => r.success).length;
   };
 
+  const getFailedCount = () => {
+    return results.filter(r => !r.success).length;
+  };
+
   const getProgressColor = () => {
     if (!isDelegationStarted) return 'bg-gray-600';
-    if (delegationComplete) {
-      return getSuccessCount() === selectedLicenses.size ? 'bg-green-500' : 'bg-yellow-500';
+    if (delegationComplete && finalStats) {
+      if (finalStats.successful === finalStats.total) return 'bg-green-500';
+      if (finalStats.successful > 0) return 'bg-yellow-500';
+      return 'bg-red-500';
     }
     return 'bg-pink-500';
   };
+
+  const getStatusSummary = () => {
+    if (!isDelegationStarted) return null;
+    
+    const successCount = getSuccessCount();
+    const failedCount = getFailedCount();
+    const totalCount = selectedLicenses.size;
+    
+    if (delegationComplete && finalStats) {
+      if (finalStats.successful === finalStats.total) {
+        return { type: 'success', message: `All ${totalCount} licenses delegated successfully!` };
+      } else if (finalStats.successful > 0) {
+        return { type: 'partial', message: `${finalStats.successful} successful, ${finalStats.failed} failed` };
+      } else {
+        return { type: 'error', message: `All ${totalCount} licenses failed to delegate` };
+      }
+    }
+    
+    return { type: 'progress', message: `Processing ${totalCount} licenses...` };
+  };
+
+  const statusSummary = getStatusSummary();
 
   return (
     <div className="mt-4 space-y-6">
@@ -146,8 +204,17 @@ export function DelegateLicenses({
             </div>
           )}
 
+          {/* Progress Section */}
           <div className="space-y-2">
-            <div className="text-sm text-gray-400">Progress</div>
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-gray-400">Progress</div>
+              {selectedLicenses.size > 50 && isDelegationStarted && !delegationComplete && (
+                <div className="text-xs text-blue-400 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  Single transaction - {selectedLicenses.size} licenses
+                </div>
+              )}
+            </div>
             <div className="bg-[#2D2438] rounded-full h-2.5 overflow-hidden">
               <div 
                 className={`h-full transition-all duration-500 ${getProgressColor()}`}
@@ -157,12 +224,15 @@ export function DelegateLicenses({
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-400">
                 {getSuccessCount()} of {selectedLicenses.size} licenses delegated
+                {getFailedCount() > 0 && ` (${getFailedCount()} failed)`}
               </span>
               {isDelegationStarted && (
                 <span className={`font-medium ${
                   delegationComplete 
-                    ? getSuccessCount() === selectedLicenses.size 
+                    ? finalStats?.successful === selectedLicenses.size 
                       ? 'text-green-400' 
+                      : finalStats?.successful === 0
+                      ? 'text-red-400'
                       : 'text-yellow-400'
                     : 'text-pink-400'
                 }`}>
@@ -172,10 +242,35 @@ export function DelegateLicenses({
             </div>
           </div>
 
+          {/* Status Summary */}
+          {statusSummary && (
+            <div className={`p-3 rounded-lg border ${
+              statusSummary.type === 'success' 
+                ? 'bg-green-500/10 border-green-500/20 text-green-400'
+                : statusSummary.type === 'partial'
+                ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
+                : statusSummary.type === 'error'
+                ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                : 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+            }`}>
+              <div className="flex items-center gap-2">
+                {statusSummary.type === 'success' && <CheckCircle className="w-4 h-4" />}
+                {statusSummary.type === 'partial' && <AlertTriangle className="w-4 h-4" />}
+                {statusSummary.type === 'error' && <XCircle className="w-4 h-4" />}
+                {statusSummary.type === 'progress' && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span className="text-sm font-medium">{statusSummary.message}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Detailed Results */}
           {results.length > 0 && (
-            <div className="mt-4 bg-[#2D2438] rounded-lg p-4 max-h-[240px] overflow-y-auto">
-              <h4 className="text-sm font-medium mb-3 sticky top-0 bg-[#2D2438] py-1">
-                Delegation Status
+            <div className="mt-4 bg-[#2D2438] rounded-lg p-4 max-h-[300px] overflow-y-auto">
+              <h4 className="text-sm font-medium mb-3 sticky top-0 bg-[#2D2438] py-1 flex items-center justify-between">
+                <span>Delegation Status</span>
+                <span className="text-xs text-gray-400">
+                  {results.length}/{selectedLicenses.size} processed
+                </span>
               </h4>
               <div className="space-y-2">
                 {Array.from(selectedLicenses).map((tokenId) => {
@@ -197,20 +292,27 @@ export function DelegateLicenses({
                         )}
                         <span className="font-mono">Token #{tokenId}</span>
                       </div>
-                      <span className={`px-2 py-0.5 rounded-full text-xs ${
-                        result
-                          ? result.success
-                            ? 'bg-green-500/10 text-green-400'
-                            : 'bg-red-500/10 text-red-400'
-                          : 'bg-gray-500/10 text-gray-400'
-                      }`}>
-                        {result
-                          ? result.success
-                            ? 'Success'
-                            : 'Failed'
-                          : 'Pending'
-                        }
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${
+                          result
+                            ? result.success
+                              ? 'bg-green-500/10 text-green-400'
+                              : 'bg-red-500/10 text-red-400'
+                            : 'bg-gray-500/10 text-gray-400'
+                        }`}>
+                          {result
+                            ? result.success
+                              ? 'Success'
+                              : 'Failed'
+                            : 'Pending'
+                          }
+                        </span>
+                        {result?.error && (
+                          <span className="text-xs text-red-400 max-w-[100px] truncate" title={result.error}>
+                            {result.error}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -220,7 +322,11 @@ export function DelegateLicenses({
 
           {error && (
             <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400">
-              {error}
+              <div className="flex items-center gap-2">
+                <XCircle className="w-4 h-4" />
+                <span className="font-medium">Error:</span>
+              </div>
+              <p className="mt-1 text-sm">{error}</p>
             </div>
           )}
         </div>
@@ -239,7 +345,7 @@ export function DelegateLicenses({
                 Preparing...
               </>
             ) : (
-              'Delegate Licenses'
+              `Delegate ${selectedLicenses.size} License${selectedLicenses.size > 1 ? 's' : ''}`
             )}
           </button>
         ) : (
@@ -247,11 +353,12 @@ export function DelegateLicenses({
             onClick={onDelegationComplete}
             disabled={isLoading || !delegationComplete}
             className={`px-6 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-medium ${
-              getSuccessCount() === selectedLicenses.size
+              finalStats?.successful === selectedLicenses.size
                 ? 'bg-green-500 hover:bg-green-600 text-white'
+                : finalStats?.successful === 0
+                ? 'bg-red-500 hover:bg-red-600 text-white'
                 : 'bg-yellow-500 hover:bg-yellow-600 text-white'
-            }`}
-          >
+            }`}>
             {isLoading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -266,3 +373,5 @@ export function DelegateLicenses({
     </div>
   );
 }
+
+export default DelegateLicenses;
